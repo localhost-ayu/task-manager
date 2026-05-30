@@ -1,18 +1,35 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import { TaskModal } from '../components/TaskModal'
 import api from '../api/axios'
 
+const STATUS_LABEL = {
+  pending:     'Pendente',
+  in_progress: 'Em andamento',
+  completed:   'Concluída',
+}
+
+const PRIORITY_LABEL = {
+  low:    'Baixa',
+  medium: 'Média',
+  high:   'Alta',
+}
+
 export function Dashboard() {
   const { user, logout } = useAuth()
 
-  const [tasks, setTasks]           = useState([])
+  const [tasks, setTasks]             = useState([])
   const [loadingTasks, setLoadingTasks] = useState(true)
-  const [modalOpen, setModalOpen]   = useState(false)
-  const [editingTask, setEditingTask] = useState(null)   // null = criar, objeto = editar
-  const [savingTask, setSavingTask] = useState(false)
+  const [modalOpen, setModalOpen]     = useState(false)
+  const [editingTask, setEditingTask] = useState(null)
+  const [savingTask, setSavingTask]   = useState(false)
 
-  // Buscar tarefas 
+  //Filtros
+  const [search, setSearch]           = useState('')
+  const [filterStatus, setFilterStatus]   = useState('all')
+  const [filterPriority, setFilterPriority] = useState('all')
+
+  //Buscar tarefas
   const fetchTasks = useCallback(async () => {
     try {
       const response = await api.get('/tasks')
@@ -24,38 +41,40 @@ export function Dashboard() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchTasks()
-  }, [fetchTasks])
+  useEffect(() => { fetchTasks() }, [fetchTasks])
 
-  // Abrir modal
-  const handleNewTask = () => {
-    setEditingTask(null)
-    setModalOpen(true)
-  }
+  //Filtragem local (sem nova chamada à API) 
+  const filteredTasks = useMemo(() => {
+    return tasks.filter(task => {
+      const matchSearch   = task.title.toLowerCase()
+                              .includes(search.toLowerCase())
+      const matchStatus   = filterStatus   === 'all' || task.status   === filterStatus
+      const matchPriority = filterPriority === 'all' || task.priority === filterPriority
+      return matchSearch && matchStatus && matchPriority
+    })
+  }, [tasks, search, filterStatus, filterPriority])
 
-  const handleEditTask = (task) => {
-    setEditingTask(task)
-    setModalOpen(true)
-  }
+  //Stats para o resumo do topo
+  const stats = useMemo(() => ({
+    total:       tasks.length,
+    pending:     tasks.filter(t => t.status === 'pending').length,
+    in_progress: tasks.filter(t => t.status === 'in_progress').length,
+    completed:   tasks.filter(t => t.status === 'completed').length,
+  }), [tasks])
 
-  const handleCloseModal = () => {
-    setModalOpen(false)
-    setEditingTask(null)
-  }
+  //Modal
+  const handleNewTask     = () => { setEditingTask(null); setModalOpen(true) }
+  const handleEditTask    = (task) => { setEditingTask(task); setModalOpen(true) }
+  const handleCloseModal  = () => { setModalOpen(false); setEditingTask(null) }
 
-  //Criar ou Editar
+  //CRUD 
   const handleSaveTask = async (formData) => {
     setSavingTask(true)
     try {
       if (editingTask) {
-        // PUT /api/tasks/{id}
         const response = await api.put(`/tasks/${editingTask.id}`, formData)
-        setTasks(prev =>
-          prev.map(t => t.id === editingTask.id ? response.data : t)
-        )
+        setTasks(prev => prev.map(t => t.id === editingTask.id ? response.data : t))
       } else {
-        // POST /api/tasks
         const response = await api.post('/tasks', formData)
         setTasks(prev => [response.data, ...prev])
       }
@@ -67,30 +86,26 @@ export function Dashboard() {
     }
   }
 
-  //Deletar
   const handleDeleteTask = async (taskId) => {
     if (!window.confirm('Tem certeza que deseja excluir esta tarefa?')) return
-
     try {
       await api.delete(`/tasks/${taskId}`)
-      // Remove da lista sem precisar rebuscar tudo
       setTasks(prev => prev.filter(t => t.id !== taskId))
     } catch (err) {
       console.error('Erro ao deletar tarefa:', err)
     }
   }
 
-  //Helpers de formatação
+  //Formatação
   const formatDate = (dateStr) => {
     if (!dateStr) return null
     const [year, month, day] = dateStr.substring(0, 10).split('-')
     return `${day}/${month}/${year}`
   }
 
-  const statusLabel = {
-    pending:     'Pendente',
-    in_progress: 'Em andamento',
-    completed:   'Concluída',
+  const isOverdue = (dateStr, status) => {
+    if (!dateStr || status === 'completed') return false
+    return new Date(dateStr) < new Date(new Date().toDateString())
   }
 
   return (
@@ -104,64 +119,123 @@ export function Dashboard() {
         </div>
       </header>
 
-      {/* Conteúdo */}
       <main className="dashboard-content">
-        <div className="tasks-header">
-          <h2>Minhas Tarefas</h2>
+
+        {/* Stats */}
+        <div className="stats-row">
+          <div className="stat-card">
+            <span className="stat-number">{stats.total}</span>
+            <span className="stat-label">Total</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-number pending">{stats.pending}</span>
+            <span className="stat-label">Pendentes</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-number in-progress">{stats.in_progress}</span>
+            <span className="stat-label">Em andamento</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-number completed">{stats.completed}</span>
+            <span className="stat-label">Concluídas</span>
+          </div>
+        </div>
+
+        {/* Toolbar */}
+        <div className="toolbar">
+          <input
+            type="text"
+            className="search-input"
+            placeholder="🔍  Buscar tarefas..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+
+          <select
+            className="filter-select"
+            value={filterStatus}
+            onChange={e => setFilterStatus(e.target.value)}
+          >
+            <option value="all">Todos os status</option>
+            <option value="pending">Pendente</option>
+            <option value="in_progress">Em andamento</option>
+            <option value="completed">Concluída</option>
+          </select>
+
+          <select
+            className="filter-select"
+            value={filterPriority}
+            onChange={e => setFilterPriority(e.target.value)}
+          >
+            <option value="all">Todas as prioridades</option>
+            <option value="high">🔴 Alta</option>
+            <option value="medium">🟡 Média</option>
+            <option value="low">🟢 Baixa</option>
+          </select>
+
           <button className="btn-new-task" onClick={handleNewTask}>
             + Nova Tarefa
           </button>
         </div>
 
+        {/* Contador de resultados */}
+        {(search || filterStatus !== 'all' || filterPriority !== 'all') && (
+          <p className="results-count">
+            {filteredTasks.length} tarefa{filteredTasks.length !== 1 ? 's' : ''} encontrada{filteredTasks.length !== 1 ? 's' : ''}
+            {' '}<button className="btn-clear-filters" onClick={() => {
+              setSearch(''); setFilterStatus('all'); setFilterPriority('all')
+            }}>Limpar filtros</button>
+          </p>
+        )}
+
         {/* Lista */}
         {loadingTasks ? (
           <div className="loading-state">Carregando tarefas...</div>
-        ) : tasks.length === 0 ? (
+        ) : filteredTasks.length === 0 ? (
           <div className="empty-state">
-            <p>📋</p>
-            <p>Nenhuma tarefa ainda.</p>
-            <p>Clique em "+ Nova Tarefa" para começar!</p>
+            <p>{tasks.length === 0 ? '📋' : '🔍'}</p>
+            <p>{tasks.length === 0
+              ? 'Nenhuma tarefa ainda.'
+              : 'Nenhuma tarefa encontrada com esses filtros.'
+            }</p>
+            {tasks.length === 0 && (
+              <p>Clique em "+ Nova Tarefa" para começar!</p>
+            )}
           </div>
         ) : (
           <div className="task-list">
-            {tasks.map(task => (
+            {filteredTasks.map(task => (
               <div key={task.id} className="task-card">
-                {/* Bolinha de prioridade */}
                 <div className={`task-priority priority-${task.priority}`} />
 
-                {/* Informações */}
                 <div className="task-info">
                   <div className={`task-title ${task.status === 'completed' ? 'completed' : ''}`}>
                     {task.title}
                   </div>
                   <div className="task-meta">
                     <span className={`task-status status-${task.status}`}>
-                      {statusLabel[task.status]}
+                      {STATUS_LABEL[task.status]}
+                    </span>
+                    <span className="task-status" style={{
+                      background: '#f3f4f6', color: '#6b7280'
+                    }}>
+                      {PRIORITY_LABEL[task.priority]}
                     </span>
                     {task.due_date && (
-                      <span className="task-due">
+                      <span className={`task-due ${isOverdue(task.due_date, task.status) ? 'overdue' : ''}`}>
                         📅 {formatDate(task.due_date)}
+                        {isOverdue(task.due_date, task.status) && ' • Atrasada'}
                       </span>
                     )}
                   </div>
+                  {task.description && (
+                    <p className="task-description">{task.description}</p>
+                  )}
                 </div>
 
-                {/* Ações */}
                 <div className="task-actions">
-                  <button
-                    className="btn-icon"
-                    onClick={() => handleEditTask(task)}
-                    title="Editar"
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    className="btn-icon delete"
-                    onClick={() => handleDeleteTask(task.id)}
-                    title="Excluir"
-                  >
-                    🗑️
-                  </button>
+                  <button className="btn-icon" onClick={() => handleEditTask(task)} title="Editar">✏️</button>
+                  <button className="btn-icon delete" onClick={() => handleDeleteTask(task.id)} title="Excluir">🗑️</button>
                 </div>
               </div>
             ))}
@@ -169,7 +243,6 @@ export function Dashboard() {
         )}
       </main>
 
-      {/* Modal */}
       {modalOpen && (
         <TaskModal
           task={editingTask}
