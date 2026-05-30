@@ -32,6 +32,10 @@ A full-stack task management application built with Laravel and React.
 * Overdue task indicators
 * Responsive design
 
+![Login](screenshots/login.png)
+![Register](screenshots/register.png)
+![Dashboard](screenshots/dashboard.png)
+
 ## Tech Stack
 
 ### Backend
